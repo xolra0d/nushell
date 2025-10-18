@@ -3,6 +3,8 @@ use nu_engine::{command_prelude::*, env};
 use nu_protocol::engine::CommandType;
 use std::fs;
 use std::{ffi::OsStr, path::Path};
+use std::path::PathBuf;
+use is_executable::IsExecutable;
 use which::sys;
 use which::sys::Sys;
 
@@ -121,44 +123,37 @@ fn list_all_executables(
     all: bool,
 ) -> Vec<Value> {
     let decls = engine_state.get_decls_sorted(false);
-    let commands = decls
+
+    // Add built-in executables
+    let mut results: Vec<Value> = decls
         .into_iter()
         .map(|x| {
             let decl = engine_state.get_decl(x.1);
-            (
-                String::from_utf8_lossy(&x.0).to_string(),
-                String::new(),
-                decl.command_type(),
-            )
+            entry(String::from_utf8_lossy(&x.0).to_string(), String::new(), decl.command_type(), Span::unknown())
         })
-        .chain(
-            sys::RealSys
-                .env_split_paths(paths.as_ref())
-                .into_iter()
-                .filter_map(|dir| fs::read_dir(dir).ok())
-                .flat_map(|entries| entries.flatten())
-                .map(|entry| entry.path())
-                .filter(|path| path.is_file())
-                .filter_map(|path| {
-                    let filename = path.file_name()?.to_string_lossy().to_string();
-                    Some((
-                        filename,
-                        path.to_string_lossy().to_string(),
-                        CommandType::External,
-                    ))
-                }),
-        );
+        .collect();
 
-    if all {
-        commands
-            .map(|(filename, path, cmd_type)| entry(filename, path, cmd_type, Span::new(0, 0)))
-            .collect()
+    // Add PATH executables
+    let iter_over_path = sys::RealSys
+        .env_split_paths(paths.as_ref())
+        .into_iter()
+        .filter_map(|dir| fs::read_dir(dir).ok())
+        .flat_map(|entries| entries.flatten())
+        .map(|entry| entry.path());
+
+    let filtered_paths: Vec<PathBuf> = if all {
+        iter_over_path.filter(|path| path.is_executable()).collect()
     } else {
-        commands
-            .unique_by(|x| x.0.clone())
-            .map(|(filename, path, cmd_type)| entry(filename, path, cmd_type, Span::new(0, 0)))
+        iter_over_path.unique_by(|path| path.file_name().map(|f| f.to_os_string()))
+            .filter(|path| path.is_executable())
             .collect()
-    }
+    };
+    results.extend(filtered_paths.into_iter().filter_map(|path| {
+        let filename = path.file_name()?.to_string_lossy().into_owned();
+        Some(entry(filename, path.to_string_lossy().into_owned(), CommandType::External, Span::unknown()))
+    }));
+
+    results
 }
 
 #[derive(Debug)]
@@ -237,8 +232,8 @@ fn which(
             app,
             which_args.all,
             engine_state,
-            cwd.clone(),
-            paths.clone(),
+            &cwd,
+            &paths,
         );
         output.extend(values);
     }

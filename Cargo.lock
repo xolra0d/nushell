@@ -4121,6 +4121,7 @@ dependencies = [
  "human-date-parser",
  "indexmap",
  "indicatif",
+ "is_executable",
  "itertools 0.14.0",
  "log",
  "lscolors",

@@ -121,9 +121,17 @@ fn list_all_executables(
     paths: impl AsRef<OsStr>,
     all: bool,
 ) -> Vec<Value> {
+    use std::time::Instant;
+    
+    let total_start = Instant::now();
+    
+    let start = Instant::now();
     let decls = engine_state.get_decls_sorted(false);
+    let get_decls_time = start.elapsed();
+    eprintln!("get_decls_sorted took: {:?}", get_decls_time);
 
     // Add built-in executables
+    let start = Instant::now();
     let mut results: Vec<Value> = decls
         .into_iter()
         .map(|x| {
@@ -131,22 +139,41 @@ fn list_all_executables(
             entry(String::from_utf8_lossy(&x.0).to_string(), String::new(), decl.command_type(), Span::unknown())
         })
         .collect();
+    let builtin_count = results.len();
+    let builtin_time = start.elapsed();
+    eprintln!("built-in executables mapping took: {:?}, count: {}", builtin_time, builtin_count);
 
+    let start = Instant::now();
     let mut seen_commands: HashSet<String> = results
         .iter()
         .filter_map(|x| x.get_data_by_key("command")?.as_str().ok().map(|s| s.to_string()))
         .collect();
+    let seen_count = seen_commands.len();
+    let seen_time = start.elapsed();
+    eprintln!("building seen_commands HashSet took: {:?}, count: {}", seen_time, seen_count);
 
     // Add PATH executables
-    let path_iter = sys::RealSys
-        .env_split_paths(paths.as_ref())
+    let start = Instant::now();
+    let split_paths = sys::RealSys.env_split_paths(paths.as_ref());
+    let dirs_count = split_paths.len();
+    let split_time = start.elapsed();
+    eprintln!("env_split_paths took: {:?}, dirs: {}", split_time, dirs_count);
+
+    let start = Instant::now();
+    let path_entries: Vec<_> = split_paths
         .into_iter()
         .filter_map(|dir| fs::read_dir(dir).ok())
         .flat_map(|entries| entries.flatten())
-        .map(|entry| entry.path());
+        .map(|entry| entry.path())
+        .collect();
+    let entries_count = path_entries.len();
+    let readdir_time = start.elapsed();
+    eprintln!("read_dir and collect paths took: {:?}, entries: {}", readdir_time, entries_count);
 
+    let start = Instant::now();
     let filtered_iter = if all {
-        Either::Left(path_iter
+        Either::Left(path_entries
+            .into_iter()
             .filter(|path| path.is_executable())
             .filter_map(|path| {
                 let filename = path.file_name()?.to_string_lossy().to_string();
@@ -154,7 +181,8 @@ fn list_all_executables(
                 Some((filename, full_path))
             }))
     } else {
-        Either::Right(path_iter
+        Either::Right(path_entries
+            .into_iter()
             .filter_map(|path| {
                 if !path.is_executable() {
                     return None;
@@ -167,10 +195,22 @@ fn list_all_executables(
                 Some((filename, full_path))
             }))
     };
+    let filtered: Vec<_> = filtered_iter.collect();
+    let filtered_count = filtered.len();
+    let filter_time = start.elapsed();
+    eprintln!("filtering and uniqueness took: {:?}, filtered: {}", filter_time, filtered_count);
 
-    results.extend(filtered_iter.map(|(filename, full_path)| {
+    let start = Instant::now();
+    results.extend(filtered.into_iter().map(|(filename, full_path)| {
         entry(filename, full_path, CommandType::External, Span::unknown())
     }));
+    let extend_time = start.elapsed();
+    eprintln!("extending results took: {:?}", extend_time);
+    
+    let total_time = total_start.elapsed();
+    let total_results = results.len();
+    eprintln!("list_all_executables total time: {:?}, total results: {}", total_time, total_results);
+    
     results
 }
 

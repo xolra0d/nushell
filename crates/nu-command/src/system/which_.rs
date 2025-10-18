@@ -1,9 +1,8 @@
-use itertools::Itertools;
+use itertools::{Either, Itertools};
 use nu_engine::{command_prelude::*, env};
 use nu_protocol::engine::CommandType;
 use std::fs;
 use std::{ffi::OsStr, path::Path};
-use std::path::PathBuf;
 use is_executable::IsExecutable;
 use which::sys;
 use which::sys::Sys;
@@ -141,16 +140,15 @@ fn list_all_executables(
         .flat_map(|entries| entries.flatten())
         .map(|entry| entry.path());
 
-    let filtered_paths: Vec<PathBuf> = if all {
-        iter_over_path.filter(|path| path.is_executable()).collect()
+    let filtered_paths = if all {
+        Either::Left(iter_over_path.filter(|path| path.is_executable()))
     } else {
-        iter_over_path.unique_by(|path| path.file_name().map(|f| f.to_os_string()))
-            .filter(|path| path.is_executable())
-            .collect()
+        Either::Right(iter_over_path.unique_by(|path| path.file_name().map(|f| f.to_os_string()))
+            .filter(|path| path.is_executable()))
     };
-    results.extend(filtered_paths.into_iter().filter_map(|path| {
-        let filename = path.file_name()?.to_string_lossy().into_owned();
-        Some(entry(filename, path.to_string_lossy().into_owned(), CommandType::External, Span::unknown()))
+    results.extend(filtered_paths.filter_map(|path| {
+        let filename = path.file_name()?.to_string_lossy().to_string();
+        Some(entry(filename, path.to_string_lossy().to_string(), CommandType::External, Span::unknown()))
     }));
 
     results
